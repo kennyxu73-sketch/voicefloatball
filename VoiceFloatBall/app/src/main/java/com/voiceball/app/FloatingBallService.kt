@@ -291,6 +291,8 @@ class FloatingBallService : Service() {
                 }
             }
 
+            override fun onBufferReceived(buffer: ByteArray?) {}
+
             override fun onEvent(eventType: Int, params: Bundle?) {}
         })
     }
