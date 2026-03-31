@@ -48,6 +48,12 @@ class FloatingBallService : Service() {
     private var initialTouchY = 0f
     private var isMoving = false
     private var isListening = false
+    private val startRecordRunnable = Runnable {
+        if (!isMoving) {
+            vibrate()
+            startVoiceRecognition()
+        }
+    }
 
     companion object {
         const val CHANNEL_ID = "VoiceBallChannel"
@@ -100,27 +106,35 @@ class FloatingBallService : Service() {
                     initialTouchX = event.rawX
                     initialTouchY = event.rawY
                     isMoving = false
+                    // 按下超过 200ms 且没有移动，则开始录音
+                    handler.postDelayed(startRecordRunnable, 200)
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
                     val dx = event.rawX - initialTouchX
                     val dy = event.rawY - initialTouchY
-                    if (abs(dx) > 5 || abs(dy) > 5) {
+                    if (abs(dx) > 10 || abs(dy) > 10) {
                         isMoving = true
+                        // 移动时取消录音启动
+                        handler.removeCallbacks(startRecordRunnable)
+                        if (isListening) stopListening()
                         params.x = initialX + dx.toInt()
                         params.y = initialY + dy.toInt()
                         windowManager.updateViewLayout(floatingView, params)
                     }
                     true
                 }
-                MotionEvent.ACTION_UP -> {
-                    if (!isMoving) {
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    handler.removeCallbacks(startRecordRunnable)
+                    if (!isMoving && isListening) {
+                        // 松手 → 停止录音，触发识别
                         vibrate()
-                        if (isListening) {
-                            stopListening()
-                        } else {
-                            startVoiceRecognition()
-                        }
+                        stopListening()
+                    } else if (!isMoving && !isListening) {
+                        // 点击太快（未到200ms），也触发一次录音再立即停
+                        // 什么都不做，让用户感受到需要按住
+                        showStatus("按住说话")
+                        handler.postDelayed({ hideStatus() }, 1200)
                     }
                     true
                 }
