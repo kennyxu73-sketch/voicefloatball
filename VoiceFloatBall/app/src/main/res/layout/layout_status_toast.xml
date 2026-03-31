@@ -7,12 +7,47 @@
     android:paddingHorizontal="20dp"
     android:paddingVertical="12dp"
     android:gravity="center_vertical">
+
+    <!-- 声波动画：3根柱子 -->
+    <LinearLayout
+        android:id="@+id/ll_wave"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:visibility="gone"
+        android:layout_marginEnd="10dp">
+
+        <View
+            android:id="@+id/wave_bar1"
+            android:layout_width="4dp"
+            android:layout_height="8dp"
+            android:layout_marginHorizontal="2dp"
+            android:background="@drawable/wave_bar_bg" />
+
+        <View
+            android:id="@+id/wave_bar2"
+            android:layout_width="4dp"
+            android:layout_height="8dp"
+            android:layout_marginHorizontal="2dp"
+            android:background="@drawable/wave_bar_bg" />
+
+        <View
+            android:id="@+id/wave_bar3"
+            android:layout_width="4dp"
+            android:layout_height="8dp"
+            android:layout_marginHorizontal="2dp"
+            android:background="@drawable/wave_bar_bg" />
+
+    </LinearLayout>
+
     <TextView
         android:id="@+id/tv_status"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:textColor="#FFFFFF"
         android:textSize="15sp"
-        android:maxWidth="260dp"
+        android:maxWidth="240dp"
         android:text="请说话..." />
+
 </LinearLayout>
