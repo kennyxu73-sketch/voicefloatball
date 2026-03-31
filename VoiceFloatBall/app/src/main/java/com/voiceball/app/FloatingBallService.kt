@@ -8,16 +8,23 @@ import android.app.Service
 import android.content.Intent
 import android.graphics.PixelFormat
 import android.os.Build
+import android.os.Bundle
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import android.speech.RecognitionListener
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.widget.ImageView
+import android.widget.TextView
 import androidx.core.app.NotificationCompat
 import kotlin.math.abs
 
@@ -28,11 +35,19 @@ class FloatingBallService : Service() {
     private lateinit var ballImage: ImageView
     private lateinit var params: WindowManager.LayoutParams
 
+    // 状态提示悬浮窗
+    private var statusView: View? = null
+    private var tvStatus: TextView? = null
+
+    private lateinit var speechRecognizer: SpeechRecognizer
+    private val handler = Handler(Looper.getMainLooper())
+
     private var initialX = 0
     private var initialY = 0
     private var initialTouchX = 0f
     private var initialTouchY = 0f
     private var isMoving = false
+    private var isListening = false
 
     companion object {
         const val CHANNEL_ID = "VoiceBallChannel"
@@ -46,6 +61,8 @@ class FloatingBallService : Service() {
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, buildNotification())
         setupFloatingBall()
+        setupStatusView()
+        setupSpeechRecognizer()
     }
 
     private fun setupFloatingBall() {
@@ -98,9 +115,12 @@ class FloatingBallService : Service() {
                 }
                 MotionEvent.ACTION_UP -> {
                     if (!isMoving) {
-                        // 点击：触发语音识别
                         vibrate()
-                        startVoiceRecognition()
+                        if (isListening) {
+                            stopListening()
+                        } else {
+                            startVoiceRecognition()
+                        }
                     }
                     true
                 }
@@ -109,20 +129,151 @@ class FloatingBallService : Service() {
         }
     }
 
-    private fun startVoiceRecognition() {
-        // 设置录音状态UI
-        ballImage.setImageResource(R.drawable.ic_mic_active)
-
-        val intent = Intent(this, VoiceRecognitionActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+    private fun setupStatusView() {
+        val layoutFlag = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+        } else {
+            @Suppress("DEPRECATION")
+            WindowManager.LayoutParams.TYPE_PHONE
         }
-        startActivity(intent)
+
+        statusView = LayoutInflater.from(this).inflate(R.layout.layout_status_toast, null)
+        tvStatus = statusView?.findViewById(R.id.tv_status)
+
+        val statusParams = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            layoutFlag,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+            y = 200
+        }
+
+        statusView?.visibility = View.GONE
+        windowManager.addView(statusView, statusParams)
     }
 
-    fun resetBallUI() {
-        ballImage.post {
-            ballImage.setImageResource(R.drawable.ic_mic)
+    private fun showStatus(text: String) {
+        handler.post {
+            tvStatus?.text = text
+            statusView?.visibility = View.VISIBLE
         }
+    }
+
+    private fun hideStatus() {
+        handler.post {
+            statusView?.visibility = View.GONE
+        }
+    }
+
+    private fun setupSpeechRecognizer() {
+        if (!SpeechRecognizer.isRecognitionAvailable(this)) return
+
+        speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
+        speechRecognizer.setRecognitionListener(object : RecognitionListener {
+
+            override fun onReadyForSpeech(params: Bundle?) {
+                isListening = true
+                showStatus("请说话...")
+                handler.post { ballImage.setImageResource(R.drawable.ic_mic_active) }
+            }
+
+            override fun onBeginningOfSpeech() {
+                showStatus("识别中...")
+            }
+
+            override fun onRmsChanged(rmsdB: Float) {}
+            override fun onBufferReceived(buffer: ByteArray?) {}
+
+            override fun onEndOfSpeech() {
+                showStatus("处理中...")
+            }
+
+            override fun onError(error: Int) {
+                isListening = false
+                val msg = when (error) {
+                    SpeechRecognizer.ERROR_AUDIO -> "录音错误"
+                    SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "缺少麦克风权限"
+                    SpeechRecognizer.ERROR_NETWORK -> "网络错误，请检查连接"
+                    SpeechRecognizer.ERROR_NO_MATCH -> "未识别到内容"
+                    SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "识别器繁忙，请稍后"
+                    SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "等待超时"
+                    else -> "识别失败($error)"
+                }
+                showStatus(msg)
+                handler.post { ballImage.setImageResource(R.drawable.ic_mic) }
+                handler.postDelayed({ hideStatus() }, 2000)
+                // 重建识别器
+                handler.postDelayed({ rebuildRecognizer() }, 500)
+            }
+
+            override fun onResults(results: Bundle?) {
+                isListening = false
+                val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                val text = matches?.firstOrNull()
+
+                handler.post { ballImage.setImageResource(R.drawable.ic_mic) }
+
+                if (!text.isNullOrEmpty()) {
+                    showStatus("\"$text\"")
+                    VoiceAccessibilityService.instance?.insertText(text)
+                    handler.postDelayed({ hideStatus() }, 1500)
+                } else {
+                    showStatus("未识别到内容")
+                    handler.postDelayed({ hideStatus() }, 1500)
+                }
+            }
+
+            override fun onPartialResults(partialResults: Bundle?) {
+                val partial = partialResults
+                    ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                    ?.firstOrNull()
+                if (!partial.isNullOrEmpty()) {
+                    showStatus(partial)
+                }
+            }
+
+            override fun onEvent(eventType: Int, params: Bundle?) {}
+        })
+    }
+
+    private fun startVoiceRecognition() {
+        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
+            showStatus("设备不支持语音识别")
+            handler.postDelayed({ hideStatus() }, 2000)
+            return
+        }
+
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "zh-CN")
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1000L)
+        }
+
+        try {
+            speechRecognizer.startListening(intent)
+        } catch (e: Exception) {
+            showStatus("启动失败，请重试")
+            handler.postDelayed({ hideStatus() }, 2000)
+        }
+    }
+
+    private fun stopListening() {
+        isListening = false
+        speechRecognizer.stopListening()
+        ballImage.setImageResource(R.drawable.ic_mic)
+    }
+
+    private fun rebuildRecognizer() {
+        try {
+            speechRecognizer.destroy()
+        } catch (e: Exception) {}
+        setupSpeechRecognizer()
     }
 
     private fun vibrate() {
@@ -142,9 +293,7 @@ class FloatingBallService : Service() {
                     vibrator.vibrate(50)
                 }
             }
-        } catch (e: Exception) {
-            // 忽略震动错误
-        }
+        } catch (e: Exception) {}
     }
 
     private fun createNotificationChannel() {
@@ -191,9 +340,13 @@ class FloatingBallService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         isRunning = false
-        if (::floatingView.isInitialized) {
-            windowManager.removeView(floatingView)
+        if (::speechRecognizer.isInitialized) {
+            speechRecognizer.destroy()
         }
+        try {
+            if (::floatingView.isInitialized) windowManager.removeView(floatingView)
+            statusView?.let { windowManager.removeView(it) }
+        } catch (e: Exception) {}
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
