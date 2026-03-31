@@ -1,0 +1,7 @@
+#!/usr/bin/env sh
+# Gradle wrapper startup script for Unix/Mac
+# Windows 用户运行 gradlew.bat
+
+APP_HOME="$(pwd)"
+GRADLE_OPTS="${GRADLE_OPTS:-""}"
+exec java $GRADLE_OPTS -jar "$APP_HOME/gradle/wrapper/gradle-wrapper.jar" "$@"

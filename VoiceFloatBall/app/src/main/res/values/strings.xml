@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">语音悬浮球</string>
+    <string name="accessibility_service_description">语音悬浮球无障碍服务：用于将语音识别结果自动填入当前输入框。不收集、不上传任何数据。</string>
+</resources>
