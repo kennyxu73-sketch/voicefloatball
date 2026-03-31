@@ -23,10 +23,14 @@ import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
+import android.view.animation.ScaleAnimation
 import android.widget.ImageView
+import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.core.app.NotificationCompat
 import kotlin.math.abs
+import kotlin.math.max
+import kotlin.math.min
 
 class FloatingBallService : Service() {
 
@@ -38,6 +42,10 @@ class FloatingBallService : Service() {
     // 状态提示悬浮窗
     private var statusView: View? = null
     private var tvStatus: TextView? = null
+    private var llWave: LinearLayout? = null
+    private var waveBar1: View? = null
+    private var waveBar2: View? = null
+    private var waveBar3: View? = null
 
     private lateinit var speechRecognizer: SpeechRecognizer
     private val handler = Handler(Looper.getMainLooper())
@@ -153,6 +161,10 @@ class FloatingBallService : Service() {
 
         statusView = LayoutInflater.from(this).inflate(R.layout.layout_status_toast, null)
         tvStatus = statusView?.findViewById(R.id.tv_status)
+        llWave = statusView?.findViewById(R.id.ll_wave)
+        waveBar1 = statusView?.findViewById(R.id.wave_bar1)
+        waveBar2 = statusView?.findViewById(R.id.wave_bar2)
+        waveBar3 = statusView?.findViewById(R.id.wave_bar3)
 
         val statusParams = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -191,18 +203,42 @@ class FloatingBallService : Service() {
             override fun onReadyForSpeech(params: Bundle?) {
                 isListening = true
                 showStatus("请说话...")
-                handler.post { ballImage.setImageResource(R.drawable.ic_mic_active) }
+                handler.post {
+                    ballImage.setImageResource(R.drawable.ic_mic_active)
+                    llWave?.visibility = View.VISIBLE
+                }
             }
 
             override fun onBeginningOfSpeech() {
-                showStatus("识别中...")
+                showStatus("收音中...")
             }
 
-            override fun onRmsChanged(rmsdB: Float) {}
-            override fun onBufferReceived(buffer: ByteArray?) {}
+            override fun onRmsChanged(rmsdB: Float) {
+                // rmsdB 范围约 -2 ~ 10，映射到柱子高度 8dp ~ 32dp
+                val dp = resources.displayMetrics.density
+                val minH = (8 * dp).toInt()
+                val maxH = (32 * dp).toInt()
+                val level = max(0f, min(1f, (rmsdB + 2f) / 12f))
+                // 三根柱子高度错落：中间最高，两侧稍低
+                val h2 = (minH + (maxH - minH) * level).toInt()
+                val h1 = (minH + (maxH - minH) * level * 0.6f).toInt()
+                val h3 = (minH + (maxH - minH) * level * 0.75f).toInt()
+                handler.post {
+                    waveBar1?.layoutParams = (waveBar1?.layoutParams as? LinearLayout.LayoutParams)
+                        ?.also { it.height = h1 }
+                    waveBar2?.layoutParams = (waveBar2?.layoutParams as? LinearLayout.LayoutParams)
+                        ?.also { it.height = h2 }
+                    waveBar3?.layoutParams = (waveBar3?.layoutParams as? LinearLayout.LayoutParams)
+                        ?.also { it.height = h3 }
+                    waveBar1?.requestLayout()
+                    waveBar2?.requestLayout()
+                    waveBar3?.requestLayout()
+                }
+            }
 
             override fun onEndOfSpeech() {
-                showStatus("处理中...")
+                showStatus("识别中...")
+                handler.post { llWave?.visibility = View.GONE }
             }
 
             override fun onError(error: Int) {
@@ -217,7 +253,10 @@ class FloatingBallService : Service() {
                     else -> "识别失败($error)"
                 }
                 showStatus(msg)
-                handler.post { ballImage.setImageResource(R.drawable.ic_mic) }
+                handler.post {
+                    ballImage.setImageResource(R.drawable.ic_mic)
+                    llWave?.visibility = View.GONE
+                }
                 handler.postDelayed({ hideStatus() }, 2000)
                 // 重建识别器
                 handler.postDelayed({ rebuildRecognizer() }, 500)
@@ -228,7 +267,10 @@ class FloatingBallService : Service() {
                 val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                 val text = matches?.firstOrNull()
 
-                handler.post { ballImage.setImageResource(R.drawable.ic_mic) }
+                handler.post {
+                    ballImage.setImageResource(R.drawable.ic_mic)
+                    llWave?.visibility = View.GONE
+                }
 
                 if (!text.isNullOrEmpty()) {
                     showStatus("\"$text\"")
